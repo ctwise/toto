@@ -265,7 +265,20 @@ module Toto
       else
         self[:body].match(/(.{1,#{length || config[:length] || config[:max]}}.*?)(\n|\Z)/m).to_s
       end
-      base_text = sum.length == self[:body].length ? sum : sum.strip.sub(/\.\Z/, '&hellip;')
+      if sum.length == self[:body].length
+        base_text = sum
+      else
+        rest = self[:body].slice(sum.length, self[:body].length)
+        links = "\n" + rest.split("\n").grep(/^\[.*\]: /).join("\n")
+        if sum =~ /\.\Z/
+          base_text = sum.strip.sub(/\.\Z/, '&hellip;')
+        else
+          base_text = sum.strip + '&hellip;'
+        end
+        if (use_markdown)
+          base_text += links
+        end
+      end
       if (use_markdown)
         markdown(base_text)
       else
