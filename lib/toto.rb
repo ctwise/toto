@@ -97,11 +97,11 @@ module Toto
       self[:root]
     end
 
-    def go route, type = :html, env
+    def go route, request, response, env, type = :html
       route << self./ if route.empty?
       type, path = type =~ /html|xml|json/ ? type.to_sym : :html, route.join('/')
       context = lambda do |data, page|
-        Context.new(data, @config, path, env).render(page, type)
+        Context.new(data, @config, path, request, response, env).render(page, type)
       end
 
       body, status = if Context.new.respond_to?(:"to_#{type}")
@@ -113,6 +113,12 @@ module Toto
               context[article(route), :article]
             else http 400
           end
+        elsif route.first == 'category'
+          context[{:route => route, :complete_path => path}, :category]
+        elsif route.first == 'tag'
+          context[{:route => route, :complete_path => path}, :tag]
+        elsif route.first == 'page'
+          context[{:route => route, :complete_path => path}, :page]
         elsif respond_to?(path)
           context[send(path, type), path.to_sym]
         elsif (repo = @config[:github][:repos].grep(/#{path}/).first) &&
@@ -147,10 +153,10 @@ module Toto
 
     class Context
       include Template
-      attr_reader :env
+      attr_reader :request, :response, :env
 
-      def initialize ctx = {}, config = {}, path = "/", env = {}
-        @config, @context, @path, @env = config, ctx, path, env
+      def initialize ctx = {}, config = {}, path = "/", request = nil, response = nil, env = {}
+        @config, @context, @path, @request, @response, @env = config, ctx, path, request, response, env
         @articles = Site.articles(@config[:ext]).reverse.map do |a|
           Article.new(a, @config)
         end
@@ -252,14 +258,19 @@ module Toto
       self[:slug] || self[:title].slugize
     end
 
-    def summary length = nil
+    def summary length = nil, use_markdown = true
       config = @config[:summary]
       sum = if self[:body] =~ config[:delim]
         self[:body].split(config[:delim]).first
       else
         self[:body].match(/(.{1,#{length || config[:length] || config[:max]}}.*?)(\n|\Z)/m).to_s
       end
-      markdown(sum.length == self[:body].length ? sum : sum.strip.sub(/\.\Z/, '&hellip;'))
+      base_text = sum.length == self[:body].length ? sum : sum.strip.sub(/\.\Z/, '&hellip;')
+      if (use_markdown)
+        markdown(base_text)
+      else
+        base_text
+      end    
     end
 
     def url
@@ -310,7 +321,11 @@ module Toto
 
     def set key, val = nil, &blk
       if val.is_a? Hash
-        self[key].update val
+        if self[key]
+          self[key].update val
+        else
+          self[key] = val
+        end
       else
         self[key] = block_given?? blk : val
       end
@@ -330,22 +345,25 @@ module Toto
       @request  = Rack::Request.new env
       @response = Rack::Response.new
 
-      return [400, {}, []] unless @request.get?
+      # return [400, {}, []] unless @request.get?
 
       path, mime = @request.path_info.split('.')
       route = (path || '/').split('/').reject {|i| i.empty? }
 
-      response = @site.go(route, *(mime ? mime : []), env)
+      response = @site.go(route, @request, @response, env, *(mime ? mime : []))
 
       @response.body = [response[:body]]
       @response['Content-Length'] = response[:body].length.to_s unless response[:body].empty?
       @response['Content-Type']   = Rack::Mime.mime_type(".#{response[:type]}")
 
       # Set http cache headers
-      @response['Cache-Control'] = if Toto.env == 'production'
-        "public, max-age=#{@config[:cache]}"
-      else
-        "no-cache, must-revalidate"
+      if Toto.env == 'production'
+        # Set http cache headers
+        @response['Cache-Control'] = "public, max-age=#{@config[:cache]}"
+        expires = Time.now + @config[:cache]
+        @response['Expires'] = expires.gmtime.strftime('%a, %d %b %Y %H:%M:%S GMT')
+      else  
+        @response['Cache-Control'] = "no-cache, must-revalidate"
       end
 
       @response['ETag'] = %("#{Digest::SHA1.hexdigest(response[:body])}")
