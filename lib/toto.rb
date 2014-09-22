@@ -97,7 +97,7 @@ module Toto
       self[:root]
     end
 
-    def go route, request, response, env, type = :html
+    def go route, request, response, env = {}, type = :html
       route << self./ if route.empty?
       type, path = type =~ /html|xml|json/ ? type.to_sym : :html, route.join('/')
       context = lambda do |data, page|
@@ -190,7 +190,7 @@ module Toto
   class Repo < Hash
     include Template
 
-    README = "http://github.com/%s/%s/raw/master/README.%s"
+    README = "https://github.com/%s/%s/raw/master/README.%s"
 
     def initialize name, config
       self[:name], @config = name, config
@@ -366,7 +366,7 @@ module Toto
       response = @site.go(route, @request, @response, env, *(mime ? mime : []))
 
       @response.body = [response[:body]]
-      @response['Content-Length'] = response[:body].length.to_s unless response[:body].empty?
+      @response['Content-Length'] = response[:body].bytesize.to_s unless response[:body].empty?
       @response['Content-Type']   = Rack::Mime.mime_type(".#{response[:type]}")
 
       # Set http cache headers
